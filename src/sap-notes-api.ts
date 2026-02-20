@@ -1244,14 +1244,18 @@ export class SapNotesApiClient {
    */
   private extractSoftwareComponents(sapNote: any): { component: string; version: string; supportPackage: string }[] {
     const versions: { component: string; version: string; supportPackage: string }[] = [];
-    
-    try {
-      if (sapNote.SupportPackage?.Items && Array.isArray(sapNote.SupportPackage.Items)) {
-        for (const item of sapNote.SupportPackage.Items) {
-          const componentVersion = item.SoftwareComponentVersion || '';
-          // Parse "S4CORE 102" or "SEM-BW 600" into component and version
-          const match = componentVersion.match(/^([A-Z0-9_-]+)\s+(\d+)$/);
-          if (match) {
+    // Track seen keys to avoid duplicates across sources
+    const seen = new Set<string>();
+
+    const parseItems = (items: any[], sourceField: string) => {
+      for (const item of items) {
+        const componentVersion = item.SoftwareComponentVersion || '';
+        // Match component names like "S4CORE 102" or "SEM-BW 600"
+        const match = componentVersion.match(/^([A-Z0-9_-]+)\s+(\d+)$/);
+        if (match) {
+          const key = `${match[1]}:${match[2]}`;
+          if (!seen.has(key)) {
+            seen.add(key);
             versions.push({
               component: match[1],
               version: match[2],
@@ -1259,15 +1263,28 @@ export class SapNotesApiClient {
             });
           }
         }
-        
-        if (versions.length > 0) {
-          logger.info(`✅ Extracted ${versions.length} software component versions`);
-        }
+      }
+      logger.debug(`📦 Parsed ${sourceField}: ${versions.length} total entries so far`);
+    };
+
+    try {
+      // Primary source: SupportPackage.Items (e.g. S4CORE, S4COREOP)
+      if (sapNote.SupportPackage?.Items && Array.isArray(sapNote.SupportPackage.Items)) {
+        parseItems(sapNote.SupportPackage.Items, 'SupportPackage');
+      }
+
+      // Secondary source: SupportPackagePatch.Items (e.g. SEM-BW, add-on components)
+      if (sapNote.SupportPackagePatch?.Items && Array.isArray(sapNote.SupportPackagePatch.Items)) {
+        parseItems(sapNote.SupportPackagePatch.Items, 'SupportPackagePatch');
+      }
+
+      if (versions.length > 0) {
+        logger.info(`✅ Extracted ${versions.length} software component versions`);
       }
     } catch (error) {
       logger.debug(`⚠️ Failed to extract software components: ${error}`);
     }
-    
+
     return versions;
   }
 
