@@ -2086,7 +2086,7 @@ export class SapNotesApiClient {
       
       // Get the project root directory
       const currentDir = process.cwd();
-      const tokenCacheFile = join(currentDir, 'token-cache.json');
+      const tokenCacheFile = process.env.TOKEN_CACHE_PATH || join(currentDir, 'token-cache.json');
       
       if (!existsSync(tokenCacheFile)) {
         logger.debug('No token cache file found');

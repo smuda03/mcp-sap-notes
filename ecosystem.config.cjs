@@ -4,7 +4,7 @@ module.exports = {
   apps: [{
     name: 'mcp-sap-notes',
     script: 'dist/http-mcp-server.js',
-    cwd: '/root/mcp-sap-notes',
+    cwd: '/app',
     exec_mode: 'fork',
     instances: 1,
     autorestart: true,

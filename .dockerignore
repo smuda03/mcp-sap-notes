@@ -1,0 +1,28 @@
+# Dependencies & build output
+node_modules/
+dist/
+
+# Secrets & runtime state — injected via env / volumes at runtime
+.env
+certs/
+token-cache.json
+
+# Dev & test files
+test/
+*.sh
+images/
+combine-project-files.js
+debug-container.sh
+start-debug-safe.sh
+test-headless-fix.sh
+
+# Docs
+*.md
+DEBUG_OUTPUT_REFERENCE.md
+SAP_NOTE_SEARCH_FLOW.md
+SPEC.md
+
+# Misc
+.git/
+.gitignore
+*.log

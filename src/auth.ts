@@ -3,7 +3,8 @@ import { writeFileSync, existsSync, readFileSync } from 'fs';
 import type { AuthState, ServerConfig } from './types.js';
 import { logger } from './logger.js';
 
-const TOKEN_CACHE_FILE = 'token-cache.json';
+// Allow overriding the cache path via env var so Docker volumes can be used
+const TOKEN_CACHE_FILE = process.env.TOKEN_CACHE_PATH || 'token-cache.json';
 
 /**
  * Custom error classes for better error handling
