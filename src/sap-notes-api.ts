@@ -1249,8 +1249,8 @@ export class SapNotesApiClient {
       if (sapNote.SupportPackage?.Items && Array.isArray(sapNote.SupportPackage.Items)) {
         for (const item of sapNote.SupportPackage.Items) {
           const componentVersion = item.SoftwareComponentVersion || '';
-          // Parse "S4CORE 102" into component and version
-          const match = componentVersion.match(/^([A-Z0-9_]+)\s+(\d+)$/);
+          // Parse "S4CORE 102" or "SEM-BW 600" into component and version
+          const match = componentVersion.match(/^([A-Z0-9_-]+)\s+(\d+)$/);
           if (match) {
             versions.push({
               component: match[1],
