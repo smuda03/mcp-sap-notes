@@ -382,7 +382,10 @@ class HttpSapNoteMcpServer {
             releaseDate: noteDetail.releaseDate,
             language: noteDetail.language,
             url: noteDetail.url,
-            content: noteDetail.content
+            content: noteDetail.content,
+            cvssScore: noteDetail.cvssScore || null,
+            cvssVector: noteDetail.cvssVector || null,
+            affectedVersions: noteDetail.affectedVersions || null
           };
 
           // Format display text
@@ -394,6 +397,18 @@ class HttpSapNoteMcpServer {
           resultText += `**Category:** ${output.category || 'Not specified'}\n`;
           resultText += `**Release Date:** ${output.releaseDate}\n`;
           resultText += `**Language:** ${output.language}\n`;
+          if (output.cvssScore) {
+            resultText += `**CVSS Score:** ${output.cvssScore}\n`;
+          }
+          if (output.cvssVector) {
+            resultText += `**CVSS Vector:** ${output.cvssVector}\n`;
+          }
+          if (output.affectedVersions && output.affectedVersions.length > 0) {
+            resultText += `**Affected Versions (${output.affectedVersions.length}):**\n`;
+            for (const version of output.affectedVersions) {
+              resultText += `  - ${version.component} ${version.version} → ${version.supportPackage}\n`;
+            }
+          }
           resultText += `**URL:** ${output.url}\n\n`;
           resultText += `**Content:**\n${output.content}\n\n`;
 

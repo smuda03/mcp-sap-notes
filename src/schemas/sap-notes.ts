@@ -288,6 +288,43 @@ Important: This is raw HTML content. You should:
 
 Do not return raw HTML to the user - extract and format the relevant information.`
     ),
+  
+  cvssScore: z
+    .string()
+    .optional()
+    .nullable()
+    .describe(
+      `CVSS Base Score for security notes (e.g., "8.1", "7.5", "9.8").
+
+This field is only populated for security-related SAP Notes (CVE notes).
+Higher scores indicate more severe vulnerabilities:
+• 9.0-10.0: Critical
+• 7.0-8.9: High
+• 4.0-6.9: Medium
+• 0.1-3.9: Low
+
+null or undefined if not a security note or CVSS not available.`
+    ),
+  
+  cvssVector: z
+    .string()
+    .optional()
+    .nullable()
+    .describe(
+      `CVSS Vector String for security notes (e.g., "CVSS:3.0/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N").
+
+This provides detailed vulnerability characteristics:
+• AV: Attack Vector (N=Network, A=Adjacent, L=Local, P=Physical)
+• AC: Attack Complexity (L=Low, H=High)
+• PR: Privileges Required (N=None, L=Low, H=High)
+• UI: User Interaction (N=None, R=Required)
+• S: Scope (U=Unchanged, C=Changed)
+• C: Confidentiality Impact (N=None, L=Low, H=High)
+• I: Integrity Impact (N=None, L=Low, H=High)
+• A: Availability Impact (N=None, L=Low, H=High)
+
+null or undefined if not a security note or CVSS not available.`
+    ),
 };
 
 /**

@@ -29,6 +29,13 @@ export interface SapNoteDetail {
   priority?: string;
   category?: string;
   url: string;
+  cvssScore?: string;
+  cvssVector?: string;
+  affectedVersions?: Array<{
+    component: string;
+    version: string;
+    supportPackage: string;
+  }>;
 }
 
 /**
@@ -1168,18 +1175,289 @@ export class SapNotesApiClient {
    * Map OData result to our SapNoteDetail format
    */
   private mapToSapNoteDetail(item: any, noteId: string): SapNoteDetail {
+    // Extract CVSS from content if available
+    let cvssScore: string | undefined;
+    let cvssVector: string | undefined;
+    
+    const contentStr = item.Content || item.content || item.Text || item.summary || '';
+    
+    // Look for CVSS Score in content
+    const cvssScoreMatch = contentStr.match(/CVSS(?:\s+Base\s+Score)?[\s:]+(\d+\.?\d*)/i);
+    if (cvssScoreMatch) {
+      cvssScore = cvssScoreMatch[1];
+    }
+    
+    // Look for CVSS Vector in content
+    const cvssVectorMatch = contentStr.match(/CVSS:3\.\d\/[A-Z:\/]+/i);
+    if (cvssVectorMatch) {
+      cvssVector = cvssVectorMatch[0];
+    }
+    
+    // Also check if CVSS fields exist directly in the item
+    if (item.CvssScore || item.cvssScore || item.CVSSScore) {
+      cvssScore = item.CvssScore || item.cvssScore || item.CVSSScore;
+    }
+    if (item.CvssVector || item.cvssVector || item.CVSSVector) {
+      cvssVector = item.CvssVector || item.cvssVector || item.CVSSVector;
+    }
+    
     return {
       id: item.SapNote || item.Id || item.id || noteId,
       title: item.Title || item.title || 'Unknown Title',
       summary: item.Summary || item.summary || item.Description || 'No summary available',
-      content: item.Content || item.content || item.Text || item.summary || 'Content not available',
+      content: contentStr || 'Content not available',
       language: item.Language || item.language || 'EN',
       releaseDate: item.ReleaseDate || item.releaseDate || item.CreationDate || 'Unknown',
       component: item.Component || item.component,
       priority: item.Priority || item.priority,
       category: item.Category || item.category,
-      url: `https://launchpad.support.sap.com/#/notes/${noteId}`
+      url: `https://launchpad.support.sap.com/#/notes/${noteId}`,
+      cvssScore,
+      cvssVector
     };
+  }
+
+  /**
+   * Extract CVSS information from content string
+   */
+  private extractCvssFromContent(content: string): { cvssScore?: string; cvssVector?: string } {
+    let cvssScore: string | undefined;
+    let cvssVector: string | undefined;
+    
+    // Extract CVSS Score - look for patterns like "CVSS: 8.1" or "CVSS Base Score: 8.1"
+    const cvssScoreMatch = content.match(/CVSS(?:\s+Base\s+Score)?[\s:]+(\d+\.?\d*)/i);
+    if (cvssScoreMatch) {
+      cvssScore = cvssScoreMatch[1];
+    }
+    
+    // Extract CVSS Vector - look for CVSS:3.0/AV:... or CVSS:3.1/AV:... patterns
+    const cvssVectorMatch = content.match(/CVSS:3\.\d\/[A-Z:\/]+/i);
+    if (cvssVectorMatch) {
+      cvssVector = cvssVectorMatch[0];
+    }
+    
+    return { cvssScore, cvssVector };
+  }
+
+  /**
+   * Extract software component versions from SAP Note JSON
+   */
+  private extractSoftwareComponents(sapNote: any): { component: string; version: string; supportPackage: string }[] {
+    const versions: { component: string; version: string; supportPackage: string }[] = [];
+    
+    try {
+      if (sapNote.SupportPackage?.Items && Array.isArray(sapNote.SupportPackage.Items)) {
+        for (const item of sapNote.SupportPackage.Items) {
+          const componentVersion = item.SoftwareComponentVersion || '';
+          // Parse "S4CORE 102" into component and version
+          const match = componentVersion.match(/^([A-Z0-9_]+)\s+(\d+)$/);
+          if (match) {
+            versions.push({
+              component: match[1],
+              version: match[2],
+              supportPackage: item.SupportPackage || ''
+            });
+          }
+        }
+        
+        if (versions.length > 0) {
+          logger.info(`✅ Extracted ${versions.length} software component versions`);
+        }
+      }
+    } catch (error) {
+      logger.debug(`⚠️ Failed to extract software components: ${error}`);
+    }
+    
+    return versions;
+  }
+
+  /**
+   * Extract CVSS information from SAP Note page by navigating to CVSS tab
+   */
+  private async extractCvssFromPage(page: Page, noteId: string): Promise<{ cvssScore?: string; cvssVector?: string }> {
+    try {
+      logger.info(`🔍 Attempting to extract CVSS data from page for note ${noteId}`);
+      
+      // Navigate to the SAP Launchpad note URL (not the raw API)
+      const noteUrl = `https://launchpad.support.sap.com/#/notes/${noteId}`;
+      
+      // Check if we're already on the right page or need to navigate
+      const currentUrl = page.url();
+      logger.debug(`📍 Current URL: ${currentUrl}`);
+      
+      if (!currentUrl.includes('launchpad.support.sap.com/#/notes')) {
+        logger.info(`🌐 Navigating to SAP Launchpad: ${noteUrl}`);
+        try {
+          await page.goto(noteUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          logger.debug(`✅ Page loaded successfully`);
+          // Wait for SPA to render
+          await page.waitForTimeout(5000);
+        } catch (navError) {
+          const errorMessage = navError instanceof Error ? navError.message : String(navError);
+          logger.warn(`⚠️ Navigation issue: ${errorMessage}, continuing anyway`);
+          await page.waitForTimeout(3000);
+        }
+      }
+      
+      // Log page title and content preview for debugging
+      const pageTitle = await page.title().catch(() => 'Unknown');
+      logger.debug(`📄 Page title: ${pageTitle}`);
+      
+      // Look for CVSS tab - try different selectors based on SAP Fiori UI5 patterns
+      const cvssTabSelectors = [
+        'text=CVSS',
+        '[role="tab"]:has-text("CVSS")',
+        'button:has-text("CVSS")',
+        'a:has-text("CVSS")',
+        '.sapMITBText:has-text("CVSS")',
+        '.sapMITBFilter:has-text("CVSS")',
+        'div[role="tab"]:has-text("CVSS")',
+        '.sapUiIconTabHeaderText:has-text("CVSS")'
+      ];
+      
+      let cvssTabFound = false;
+      logger.debug(`🔍 Searching for CVSS tab with ${cvssTabSelectors.length} selectors...`);
+      
+      for (const selector of cvssTabSelectors) {
+        try {
+          const cvssTab = page.locator(selector).first();
+          const isVisible = await cvssTab.isVisible({ timeout: 3000 }).catch(() => false);
+          
+          if (isVisible) {
+            logger.info(`✅ Found CVSS tab with selector: ${selector}`);
+            await cvssTab.click();
+            logger.debug(`✅ Clicked CVSS tab, waiting for content...`);
+            await page.waitForTimeout(2000);
+            cvssTabFound = true;
+            break;
+          } else {
+            logger.debug(`❌ Selector not visible: ${selector}`);
+          }
+        } catch (e) {
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          logger.debug(`❌ Selector failed: ${selector} - ${errorMessage}`);
+          continue;
+        }
+      }
+      
+      if (!cvssTabFound) {
+        logger.warn(`⚠️ CVSS tab not found on page for note ${noteId}`);
+        // Try to get page content for debugging
+        const bodyText = await page.locator('body').textContent({ timeout: 5000 }).catch(() => '');
+        const hasCvssText = bodyText && bodyText.includes('CVSS');
+        logger.debug(`📝 Page contains 'CVSS' text: ${hasCvssText}`);
+        if (hasCvssText) {
+          logger.debug(`📝 Page has CVSS text but tab not clickable - might be pre-selected or in different structure`);
+          // Continue anyway - maybe CVSS data is already visible
+        } else {
+          return { cvssScore: undefined, cvssVector: undefined };
+        }
+      }
+      
+      // Extract CVSS Score from the page
+      let cvssScore: string | undefined;
+      let cvssVector: string | undefined;
+      
+      logger.debug(`🔍 Searching for CVSS Base Score...`);
+      
+      // Try to find CVSS Base Score with multiple strategies
+      const scoreStrategies = [
+        // Strategy 1: Look for text pattern
+        async () => {
+          const text = await page.locator('text=/CVSS.*Base Score.*?(\\d+\\.\\d+)/i').first().textContent({ timeout: 2000 }).catch(() => null);
+          if (text) {
+            const match = text.match(/(\d+\.?\d*)/);
+            return match ? match[1] : null;
+          }
+          return null;
+        },
+        // Strategy 2: Look for table cell after "Base Score" label
+        async () => {
+          const scoreCell = await page.locator('td:has-text("Base Score")').locator('..').locator('td').nth(1).textContent({ timeout: 2000 }).catch(() => null);
+          if (scoreCell) {
+            const match = scoreCell.match(/(\d+\.?\d*)/);
+            return match ? match[1] : null;
+          }
+          return null;
+        },
+        // Strategy 3: Look in page text for "CVSS v3.0 Base Score: X.X" pattern (from screenshot)
+        async () => {
+          const pageText = await page.locator('body').textContent({ timeout: 3000 }).catch(() => '');
+          if (pageText) {
+            const match = pageText.match(/CVSS\s*v?3\.0\s*Base Score\s*[:\s]+(\d+\.?\d*)\s*\/\s*10/i);
+            return match ? match[1] : null;
+          }
+          return null;
+        }
+      ];
+      
+      for (const strategy of scoreStrategies) {
+        const score = await strategy();
+        if (score) {
+          cvssScore = score;
+          logger.info(`✅ Extracted CVSS Score: ${cvssScore}`);
+          break;
+        }
+      }
+      
+      if (!cvssScore) {
+        logger.warn(`⚠️ Could not extract CVSS Score from page`);
+      }
+      
+      // Build CVSS Vector from table data
+      logger.debug(`🔍 Searching for CVSS Vector components...`);
+      const vectorComponents: { [key: string]: string } = {};
+      const metrics = [
+        { key: 'AV', name: 'Attack Vector', map: { 'Network': 'N', 'Adjacent': 'A', 'Local': 'L', 'Physical': 'P' } },
+        { key: 'AC', name: 'Attack Complexity', map: { 'Low': 'L', 'High': 'H' } },
+        { key: 'PR', name: 'Privileges Required', map: { 'None': 'N', 'Low': 'L', 'High': 'H' } },
+        { key: 'UI', name: 'User Interaction', map: { 'None': 'N', 'Required': 'R' } },
+        { key: 'S', name: 'Scope', map: { 'Unchanged': 'U', 'Changed': 'C' } },
+        { key: 'C', name: 'Confidentiality', map: { 'None': 'N', 'Low': 'L', 'High': 'H' } },
+        { key: 'I', name: 'Integrity', map: { 'None': 'N', 'Low': 'L', 'High': 'H' } },
+        { key: 'A', name: 'Availability', map: { 'None': 'N', 'Low': 'L', 'High': 'H' } }
+      ];
+      
+      for (const metric of metrics) {
+        try {
+          const rowSelector = `tr:has(td:has-text("${metric.name}"))`;
+          const row = page.locator(rowSelector).first();
+          if (await row.isVisible({ timeout: 1000 }).catch(() => false)) {
+            const cells = await row.locator('td').allTextContents();
+            if (cells.length >= 2) {
+              let value = cells[1].trim();
+              logger.debug(`📊 ${metric.name}: ${value}`);
+              // Map the value to CVSS notation
+              for (const [longForm, shortForm] of Object.entries(metric.map)) {
+                if (value.includes(longForm)) {
+                  vectorComponents[metric.key] = shortForm;
+                  logger.debug(`✅ Mapped ${metric.name} -> ${shortForm}`);
+                  break;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          logger.debug(`⚠️ Could not extract ${metric.name}`);
+          continue;
+        }
+      }
+      
+   // Build CVSS vector string if we have all components
+      if (Object.keys(vectorComponents).length >= 8) {
+        cvssVector = `CVSS:3.0/AV:${vectorComponents.AV}/AC:${vectorComponents.AC}/PR:${vectorComponents.PR}/UI:${vectorComponents.UI}/S:${vectorComponents.S}/C:${vectorComponents.C}/I:${vectorComponents.I}/A:${vectorComponents.A}`;
+        logger.info(`✅ Built CVSS Vector: ${cvssVector}`);
+      } else {
+        logger.warn(`⚠️ Could not build complete CVSS Vector (found ${Object.keys(vectorComponents).length}/8 components)`);
+      }
+      
+      return { cvssScore, cvssVector };
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`❌ CVSS extraction error for note ${noteId}: ${errorMessage}`);
+      return { cvssScore: undefined, cvssVector: undefined };
+    }
   }
 
 
@@ -1191,6 +1469,9 @@ export class SapNotesApiClient {
     const titleMatch = html.match(/<title>(.*?)<\/title>/i);
     const title = titleMatch ? titleMatch[1].replace(/SAP\s*-?\s*/i, '').trim() : `SAP Note ${noteId}`;
     
+    // Extract CVSS information
+    const { cvssScore, cvssVector } = this.extractCvssFromContent(html);
+    
     return {
       id: noteId,
       title,
@@ -1198,7 +1479,9 @@ export class SapNotesApiClient {
       content: 'Please visit the URL for complete note content',
       language: 'EN',
       releaseDate: 'Unknown',
-      url: `https://launchpad.support.sap.com/#/notes/${noteId}`
+      url: `https://launchpad.support.sap.com/#/notes/${noteId}`,
+      cvssScore,
+      cvssVector
     };
   }
 
@@ -1262,17 +1545,43 @@ export class SapNotesApiClient {
       
       // Check if we have a valid note response
       if (jsonData && (jsonData.SapNote || jsonData.id || jsonData.noteId)) {
+        const content = jsonData.Content || jsonData.content || jsonData.Text || jsonData.LongText || jsonData.Html || 'Note content available at URL';
+        
+        // Extract CVSS from content
+        let cvssScore: string | undefined;
+        let cvssVector: string | undefined;
+        
+        const cvssScoreMatch = content.match(/CVSS(?:\s+Base\s+Score)?[\s:]+(\d+\.?\d*)/i);
+        if (cvssScoreMatch) {
+          cvssScore = cvssScoreMatch[1];
+        }
+        
+        const cvssVectorMatch = content.match(/CVSS:3\.\d\/[A-Z:\/]+/i);
+        if (cvssVectorMatch) {
+          cvssVector = cvssVectorMatch[0];
+        }
+        
+        // Check for direct CVSS fields
+        if (jsonData.CvssScore || jsonData.cvssScore || jsonData.CVSSScore) {
+          cvssScore = jsonData.CvssScore || jsonData.cvssScore || jsonData.CVSSScore;
+        }
+        if (jsonData.CvssVector || jsonData.cvssVector || jsonData.CVSSVector) {
+          cvssVector = jsonData.CvssVector || jsonData.cvssVector || jsonData.CVSSVector;
+        }
+        
         return {
           id: jsonData.SapNote || jsonData.id || jsonData.noteId || noteId,
           title: jsonData.Title || jsonData.title || jsonData.ShortText || `SAP Note ${noteId}`,
           summary: jsonData.Summary || jsonData.summary || jsonData.Abstract || jsonData.abstract || 'SAP Note details',
-          content: jsonData.Content || jsonData.content || jsonData.Text || jsonData.LongText || jsonData.Html || 'Note content available at URL',
+          content,
           language: jsonData.Language || jsonData.language || 'EN',
           releaseDate: jsonData.ReleaseDate || jsonData.releaseDate || jsonData.CreationDate || 'Unknown',
           component: jsonData.Component || jsonData.component,
           priority: jsonData.Priority || jsonData.priority,
           category: jsonData.Category || jsonData.category || jsonData.Type,
-          url: `https://launchpad.support.sap.com/#/notes/${noteId}`
+          url: `https://launchpad.support.sap.com/#/notes/${noteId}`,
+          cvssScore,
+          cvssVector
         };
       }
     } catch (jsonError) {
@@ -1299,6 +1608,43 @@ export class SapNotesApiClient {
 
     // Fallback to HTML parsing
     return this.parseHtmlForNoteDetail(responseText, noteId);
+  }
+
+  /**
+   * Enhance note detail with CVSS data from Launchpad tab if missing
+   */
+  private async enhanceWithCvssFromTab(
+    noteDetail: SapNoteDetail,
+    page: Page,
+    noteId: string
+  ): Promise<SapNoteDetail> {
+    // If we already have CVSS data, return as-is
+    if (noteDetail.cvssScore && noteDetail.cvssVector) {
+      logger.debug(`✅ CVSS already present for note ${noteId}, skipping tab extraction`);
+      return noteDetail;
+    }
+
+    // Extract CVSS from Launchpad tab
+    logger.info(`🔍 CVSS data missing for note ${noteId}, attempting tab extraction...`);
+    try {
+      const cvssData = await this.extractCvssFromPage(page, noteId);
+      
+      if (cvssData.cvssScore || cvssData.cvssVector) {
+        logger.info(`✅ Successfully extracted CVSS from tab for note ${noteId}: Score=${cvssData.cvssScore}, Vector=${cvssData.cvssVector}`);
+        return {
+          ...noteDetail,
+          cvssScore: cvssData.cvssScore,
+          cvssVector: cvssData.cvssVector
+        };
+      } else {
+        logger.debug(`⚠️ Tab extraction returned no CVSS data for note ${noteId}`);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn(`⚠️ Failed to extract CVSS from tab for note ${noteId}: ${errorMessage}`);
+    }
+
+    return noteDetail;
   }
 
   /**
@@ -1420,33 +1766,78 @@ export class SapNotesApiClient {
                
                logger.info(`📄 Extracting SAP Note data from API response`);
                
-               return {
+               const content = sapNote.LongText?.value || 'No content available';
+               
+               // Extract CVSS from JSON structure directly
+               let cvssScore: string | undefined;
+               let cvssVector: string | undefined;
+               
+               if (sapNote.CVSS) {
+                 cvssScore = sapNote.CVSS.CVSS_Score?.value;
+                 cvssVector = sapNote.CVSS.CVSS_Vector?.vectorValue;
+                 if (cvssScore) {
+                   logger.info(`✅ Extracted CVSS Score from JSON: ${cvssScore}`);
+                 }
+                 if (cvssVector) {
+                   logger.info(`✅ Extracted CVSS Vector from JSON: ${cvssVector}`);
+                 }
+               }
+               
+               // Fallback to content extraction if not found in JSON
+               if (!cvssScore || !cvssVector) {
+                 const extracted = this.extractCvssFromContent(content);
+                 cvssScore = cvssScore || extracted.cvssScore;
+                 cvssVector = cvssVector || extracted.cvssVector;
+               }
+               
+               // Extract software component versions
+               const affectedVersions = this.extractSoftwareComponents(sapNote);
+               
+               const noteDetail = {
                  id: header.Number?.value || noteId,
                  title: sapNote.Title?.value || `SAP Note ${noteId}`,
                  summary: header.Type?.value || 'SAP Knowledge Base Article',
-                 content: sapNote.LongText?.value || 'No content available',
+                 content,
                  language: header.Language?.value || 'EN',
                  releaseDate: header.ReleasedOn?.value || 'Unknown',
                  component: header.SAPComponentKeyText?.value || header.SAPComponentKey?.value,
                  priority: header.Priority?.value,
                  category: header.Category?.value,
-                 url: `https://launchpad.support.sap.com/#/notes/${noteId}`
+                 url: `https://launchpad.support.sap.com/#/notes/${noteId}`,
+                 cvssScore,
+                 cvssVector,
+                 affectedVersions: affectedVersions.length > 0 ? affectedVersions : undefined
                };
+               
+               // Only enhance with tab if CVSS is still missing
+               if (!cvssScore || !cvssVector) {
+                 return await this.enhanceWithCvssFromTab(noteDetail, page, noteId);
+               }
+               
+               return noteDetail;
              }
              
              // Fallback to generic JSON parsing for other structures
-             return {
+             const content = jsonData.Content || jsonData.content || jsonData.Text || jsonData.LongText || jsonData.Html || jsonData.Description || 'Raw note data retrieved successfully';
+             const { cvssScore, cvssVector } = this.extractCvssFromContent(content);
+             
+             const noteDetail = {
                id: jsonData.SapNote || jsonData.id || noteId,
                title: jsonData.Title || jsonData.title || jsonData.ShortText || `SAP Note ${noteId}`,
                summary: jsonData.Summary || jsonData.summary || jsonData.Abstract || jsonData.Description || 'Note content extracted via Playwright',
-               content: jsonData.Content || jsonData.content || jsonData.Text || jsonData.LongText || jsonData.Html || jsonData.Description || 'Raw note data retrieved successfully',
+               content,
                language: jsonData.Language || 'EN',
                releaseDate: jsonData.ReleaseDate || jsonData.CreationDate || 'Unknown',
                component: jsonData.Component,
                priority: jsonData.Priority,
                category: jsonData.Category || jsonData.Type,
-               url: `https://launchpad.support.sap.com/#/notes/${noteId}`
+               url: `https://launchpad.support.sap.com/#/notes/${noteId}`,
+               cvssScore,
+               cvssVector
              };
+             
+             // Enhance with CVSS from tab if missing
+             return await this.enhanceWithCvssFromTab(noteDetail, page, noteId);
            }
         }
       } catch (jsonError) {
@@ -1470,33 +1861,78 @@ export class SapNotesApiClient {
                
                logger.info(`📄 Extracting SAP Note data from HTML body API response`);
                
-               return {
+               const content = sapNote.LongText?.value || 'No content available';
+               
+               // Extract CVSS from JSON structure directly
+               let cvssScore: string | undefined;
+               let cvssVector: string | undefined;
+               
+               if (sapNote.CVSS) {
+                 cvssScore = sapNote.CVSS.CVSS_Score?.value;
+                 cvssVector = sapNote.CVSS.CVSS_Vector?.vectorValue;
+                 if (cvssScore) {
+                   logger.info(`✅ Extracted CVSS Score from JSON: ${cvssScore}`);
+                 }
+                 if (cvssVector) {
+                   logger.info(`✅ Extracted CVSS Vector from JSON: ${cvssVector}`);
+                 }
+               }
+               
+               // Fallback to content extraction if not found in JSON
+               if (!cvssScore || !cvssVector) {
+                 const extracted = this.extractCvssFromContent(content);
+                 cvssScore = cvssScore || extracted.cvssScore;
+                 cvssVector = cvssVector || extracted.cvssVector;
+               }
+               
+               // Extract software component versions
+               const affectedVersions = this.extractSoftwareComponents(sapNote);
+               
+               const noteDetail = {
                  id: header.Number?.value || noteId,
                  title: sapNote.Title?.value || `SAP Note ${noteId}`,
                  summary: header.Type?.value || 'SAP Knowledge Base Article',
-                 content: sapNote.LongText?.value || 'No content available',
+                 content,
                  language: header.Language?.value || 'EN',
                  releaseDate: header.ReleasedOn?.value || 'Unknown',
                  component: header.SAPComponentKeyText?.value || header.SAPComponentKey?.value,
                  priority: header.Priority?.value,
                  category: header.Category?.value,
-                 url: `https://launchpad.support.sap.com/#/notes/${noteId}`
+                 url: `https://launchpad.support.sap.com/#/notes/${noteId}`,
+                 cvssScore,
+                 cvssVector,
+                 affectedVersions: affectedVersions.length > 0 ? affectedVersions : undefined
                };
+               
+               // Only enhance with tab if CVSS is still missing
+               if (!cvssScore || !cvssVector) {
+                 return await this.enhanceWithCvssFromTab(noteDetail, page, noteId);
+               }
+               
+               return noteDetail;
              }
              
              // Fallback to generic JSON parsing
-             return {
+             const content = jsonData.Content || jsonData.content || jsonData.Text || jsonData.LongText || jsonData.Html || 'Note content available';
+             const { cvssScore, cvssVector } = this.extractCvssFromContent(content);
+             
+             const noteDetail = {
                id: jsonData.SapNote || jsonData.id || noteId,
                title: jsonData.Title || jsonData.title || jsonData.ShortText || `SAP Note ${noteId}`,
                summary: jsonData.Summary || jsonData.summary || jsonData.Abstract || 'Note extracted via Playwright',
-               content: jsonData.Content || jsonData.content || jsonData.Text || jsonData.LongText || jsonData.Html || 'Note content available',
+               content,
                language: jsonData.Language || 'EN',
                releaseDate: jsonData.ReleaseDate || jsonData.CreationDate || 'Unknown',
                component: jsonData.Component,
                priority: jsonData.Priority,
                category: jsonData.Category || jsonData.Type,
-               url: `https://launchpad.support.sap.com/#/notes/${noteId}`
+               url: `https://launchpad.support.sap.com/#/notes/${noteId}`,
+               cvssScore,
+               cvssVector
              };
+             
+             // Enhance with CVSS from tab if missing
+             return await this.enhanceWithCvssFromTab(noteDetail, page, noteId);
            }
          }
       } catch (htmlJsonError) {
@@ -1549,15 +1985,23 @@ export class SapNotesApiClient {
       if (noteData.found) {
         logger.info(`📄 Extracted note data from HTML via Playwright`);
         
-        return {
+        const content = noteData.content || 'Note content extracted via browser automation';
+        const { cvssScore, cvssVector } = this.extractCvssFromContent(content);
+        
+        const noteDetail = {
           id: noteId,
           title: noteData.title || `SAP Note ${noteId}`,
           summary: noteData.summary || 'Extracted via Playwright',
-          content: noteData.content || 'Note content extracted via browser automation',
+          content,
           language: 'EN',
           releaseDate: 'Unknown',
-          url: `https://launchpad.support.sap.com/#/notes/${noteId}`
+          url: `https://launchpad.support.sap.com/#/notes/${noteId}`,
+          cvssScore,
+          cvssVector
         };
+        
+        // Enhance with CVSS from tab if missing
+        return await this.enhanceWithCvssFromTab(noteDetail, page, noteId);
       }
 
       // If we get here, we didn't find useful content

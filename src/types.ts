@@ -21,6 +21,12 @@ export interface SapNoteGetParams {
 }
 
 // SAP Note data structures (from SAP Notes API)
+export interface SoftwareComponentVersion {
+  component: string;
+  version: string;
+  supportPackage: string;
+}
+
 export interface SapNote {
   id: string;
   title: string;
@@ -31,10 +37,13 @@ export interface SapNote {
   language: string;
   summary: string;
   url: string;
+  cvssScore?: string;
+  cvssVector?: string;
 }
 
 export interface SapNoteDetail extends SapNote {
   content: string;
+  affectedVersions?: SoftwareComponentVersion[];
 }
 
 // Configuration and environment
