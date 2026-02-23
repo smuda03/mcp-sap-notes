@@ -5,6 +5,7 @@ import { chromium, type Browser, type Page } from 'playwright';
 export interface SapNoteResult {
   id: string;
   title: string;
+  noteVersion?: string;
   summary: string;
   language: string;
   releaseDate: string;
@@ -21,6 +22,7 @@ export interface SapNoteSearchResponse {
 export interface SapNoteDetail {
   id: string;
   title: string;
+  noteVersion?: string;
   summary: string;
   content: string;
   language: string;
@@ -1089,6 +1091,7 @@ export class SapNotesApiClient {
         const result: SapNoteResult = {
           id: noteId,
           title: item.title || 'Unknown Title',
+          noteVersion: item.raw?.mh_version || item.raw?.sapnote_version || undefined,
           summary: item.excerpt || item.raw?.mh_description || 'No summary available',
           language: language,
           releaseDate: releaseDate,
@@ -1204,6 +1207,7 @@ export class SapNotesApiClient {
     return {
       id: item.SapNote || item.Id || item.id || noteId,
       title: item.Title || item.title || 'Unknown Title',
+      noteVersion: item.Version || item.version || item.NoteVersion || undefined,
       summary: item.Summary || item.summary || item.Description || 'No summary available',
       content: contentStr || 'Content not available',
       language: item.Language || item.language || 'EN',
@@ -1589,6 +1593,7 @@ export class SapNotesApiClient {
         return {
           id: jsonData.SapNote || jsonData.id || jsonData.noteId || noteId,
           title: jsonData.Title || jsonData.title || jsonData.ShortText || `SAP Note ${noteId}`,
+          noteVersion: jsonData.Version || jsonData.version || jsonData.NoteVersion || undefined,
           summary: jsonData.Summary || jsonData.summary || jsonData.Abstract || jsonData.abstract || 'SAP Note details',
           content,
           language: jsonData.Language || jsonData.language || 'EN',
@@ -1813,6 +1818,7 @@ export class SapNotesApiClient {
                const noteDetail = {
                  id: header.Number?.value || noteId,
                  title: sapNote.Title?.value || `SAP Note ${noteId}`,
+                 noteVersion: header.Version?.value || header.DocumentVersion?.value || undefined,
                  summary: header.Type?.value || 'SAP Knowledge Base Article',
                  content,
                  language: header.Language?.value || 'EN',
@@ -1841,6 +1847,7 @@ export class SapNotesApiClient {
              const noteDetail = {
                id: jsonData.SapNote || jsonData.id || noteId,
                title: jsonData.Title || jsonData.title || jsonData.ShortText || `SAP Note ${noteId}`,
+               noteVersion: jsonData.Version || jsonData.version || jsonData.NoteVersion || undefined,
                summary: jsonData.Summary || jsonData.summary || jsonData.Abstract || jsonData.Description || 'Note content extracted via Playwright',
                content,
                language: jsonData.Language || 'EN',
@@ -1908,6 +1915,7 @@ export class SapNotesApiClient {
                const noteDetail = {
                  id: header.Number?.value || noteId,
                  title: sapNote.Title?.value || `SAP Note ${noteId}`,
+                 noteVersion: header.Version?.value || header.DocumentVersion?.value || undefined,
                  summary: header.Type?.value || 'SAP Knowledge Base Article',
                  content,
                  language: header.Language?.value || 'EN',
@@ -1936,6 +1944,7 @@ export class SapNotesApiClient {
              const noteDetail = {
                id: jsonData.SapNote || jsonData.id || noteId,
                title: jsonData.Title || jsonData.title || jsonData.ShortText || `SAP Note ${noteId}`,
+               noteVersion: jsonData.Version || jsonData.version || jsonData.NoteVersion || undefined,
                summary: jsonData.Summary || jsonData.summary || jsonData.Abstract || 'Note extracted via Playwright',
                content,
                language: jsonData.Language || 'EN',

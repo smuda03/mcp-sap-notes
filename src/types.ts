@@ -30,6 +30,7 @@ export interface SoftwareComponentVersion {
 export interface SapNote {
   id: string;
   title: string;
+  noteVersion?: string;
   releaseDate: string;
   component?: string;
   priority?: string;

@@ -212,6 +212,7 @@ class SapNoteMcpServer {
           const output = {
             id: noteDetail.id,
             title: noteDetail.title,
+            noteVersion: noteDetail.noteVersion || null,
             summary: noteDetail.summary,
             component: noteDetail.component || null,
             priority: noteDetail.priority || null,
@@ -228,6 +229,9 @@ class SapNoteMcpServer {
           // Format display text
           let resultText = `**SAP Note ${output.id} - Detailed Information**\n\n`;
           resultText += `**Title:** ${output.title}\n`;
+          if (output.noteVersion) {
+            resultText += `**Version:** ${output.noteVersion}\n`;
+          }
           resultText += `**Summary:** ${output.summary}\n`;
           resultText += `**Component:** ${output.component || 'Not specified'}\n`;
           resultText += `**Priority:** ${output.priority || 'Not specified'}\n`;
